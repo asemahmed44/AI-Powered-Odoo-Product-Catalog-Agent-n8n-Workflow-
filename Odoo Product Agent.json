@@ -1,0 +1,745 @@
+{
+  "name": "Odoo Product Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Odoo Product Agent v4 — GPT-5 PDF Reading\n\nFIX v4: Replaced n8n native PDF extractor (which fails on table-heavy PDFs) with GPT-5 reading the PDF directly via OpenAI API.\n\nWORKFLOW:\n• Excel: native parsing (fast, free)\n• PDF: GPT-5 reads file directly (handles complex tables, images, layouts)",
+        "height": 280,
+        "width": 540,
+        "color": 3
+      },
+      "id": "9c548583-0573-4f9c-ac9f-d845adbfc65e",
+      "name": "Sticky Note 78010f34",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1968,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {
+          "download": true
+        }
+      },
+      "id": "44589de6-f5b4-4c01-a424-dfcfd911fa91",
+      "name": "Telegram Message",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        112
+      ],
+      "webhookId": "682161a7-3057-47a5-85df-a7fef6e2693b",
+      "credentials": {
+        "telegramApi": {
+          "id": "ZweVYDSedKAPCU69",
+          "name": "AI_Agentproduct_bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst msg = item.json.message;\nconst chatId = String(msg.chat.id);\nconst mime = msg.document?.mime_type || '';\nconst fname = msg.document?.file_name || '';\nconst isExcel = !!(mime.includes('spreadsheetml') || fname.toLowerCase().endsWith('.xlsx'));\nconst isPdf = !!(mime === 'application/pdf' || fname.toLowerCase().endsWith('.pdf'));\nif (!isExcel && !isPdf) throw new Error('Send Excel (.xlsx) or PDF only.');\nreturn [{ json: { chatId, isExcel, isPdf, fileName: fname || 'file' }, binary: item.binary || {} }];"
+      },
+      "id": "09620fc7-5579-4d80-9f3b-9a7550e34c1f",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "e",
+              "leftValue": "={{ $json.isExcel }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              },
+              "rightValue": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "61a21b5f-046e-4e15-a198-7e1acdd75ebf",
+      "name": "Is Excel?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        448,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {}
+      },
+      "id": "804746df-009d-46f2-904f-8410aae53495",
+      "name": "Extract from Excel",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const chatId = $('Validate Input').first().json.chatId;\nconst allRows = $input.all().map(i => i.json);\nconst productsJson = allRows.map(r => JSON.stringify(r)).join('\\n');\nreturn [{ json: { chatId, products_json: productsJson, total_rows: allRows.length } }];"
+      },
+      "id": "1416eaa7-065e-49c2-86c0-c612328fcf51",
+      "name": "Collect All Products",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const tgItem = $('Telegram Message').first();\nconst binary = tgItem.binary?.data;\nif (!binary || !binary.data) {\n  throw new Error('No PDF binary found. Make sure Telegram Trigger has download enabled.');\n}\nconst fileName = $('Validate Input').first().json.fileName || 'document.pdf';\nreturn [{ json: { fileName, base64: binary.data, mimeType: binary.mimeType || 'application/pdf' } }];"
+      },
+      "id": "42bbf4cb-0d2d-455d-9214-748a77fa40ae",
+      "name": "Prepare PDF Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"model\":\"gpt-5\",\"max_completion_tokens\":4000,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"file\",\"file\":{\"filename\":\"{{ $json.fileName }}\",\"file_data\":\"data:application/pdf;base64,{{ $json.base64 }}\"}},{\"type\":\"text\",\"text\":\"Extract all products from this PDF document. For each product extract: name, SKU/model number/code, price in USD, brand. Output ONLY a JSON array (no markdown), one object per product. Format: [{\\\"Name\\\":\\\"product name\\\",\\\"SKU\\\":\\\"model or code\\\",\\\"Price\\\":number,\\\"Brand\\\":\\\"brand if visible\\\"}]. If a field is unknown use empty string for text or 0 for price. Return ONLY the JSON array.\"}]}]}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "1b25bb2b-5791-479a-9610-47e227489c1a",
+      "name": "GPT-5 Read PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        896,
+        208
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "MkYuX1Vbm51UBcwh",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const content = $input.first().json.choices?.[0]?.message?.content || '';\nif (!content) throw new Error('GPT returned empty response from PDF extraction.');\n\nconst clean = String(content).replace(/```json|```/gi, '').trim();\nlet products;\ntry { products = JSON.parse(clean); } catch (e) {\n  throw new Error('Could not parse GPT response as JSON: ' + e.message + ' | Response: ' + clean.substring(0, 200));\n}\nif (!Array.isArray(products)) {\n  throw new Error('GPT did not return a JSON array.');\n}\nif (products.length === 0) {\n  throw new Error('No products found in the PDF.');\n}\n\nreturn products.map(p => ({ json: { Name: String(p.Name || p.name || '').trim(), SKU: String(p.SKU || p.sku || p.code || '').trim(), Price: parseFloat(p.Price || p.price || 0) || 0, Brand: String(p.Brand || p.brand || '').trim() } }));"
+      },
+      "id": "f3600da5-e8fd-4113-bd56-39b35186eedb",
+      "name": "Parse PDF Products",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "agent": "openAiFunctionsAgent",
+        "promptType": "define",
+        "text": "=You are a Product Categorization Agent for Odoo ERP.\n\nMANDATORY FIRST STEP: Call \"Get Odoo Categories\" tool first. Use ONLY those categories. Never invent categories.\n\nPRODUCT DATA:\n{{ $json.products_json }}\n\nTASKS:\n1. Extract every product (Excel rows or already-extracted PDF data).\n2. Extract SKU/Code (look for: SKU, Ref, Code, default_code, Item No, Part No, Model No). Empty string if none.\n3. Extract Product Name.\n4. Extract Brand or empty string.\n5. Extract list_price or 0 (look for Price, Cost, Value).\n6. Assign best matching Odoo category.\n7. Return Category_ID as integer from Odoo.\n\nOUTPUT: pure JSON array only, no markdown:\n[{\"SKU\":\"\",\"Product_Name\":\"\",\"Category\":\"\",\"Category_ID\":0,\"Brand\":\"\",\"list_price\":0}]\n\nReturn ONLY the JSON array.",
+        "options": {
+          "systemMessage": "Categorize products for Odoo. Call Get Odoo Categories first. Return only JSON array with integer Category_ID."
+        }
+      },
+      "id": "ead3aab4-30e4-4c93-b8a8-1d47c460b6de",
+      "name": "AI Categorization Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        1568,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gpt-5"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "id": "dced9eca-c12e-4101-98ea-48fb7db3efce",
+      "name": "GPT-5",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1584,
+        336
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "MkYuX1Vbm51UBcwh",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "custom",
+        "operation": "getAll",
+        "returnAll": true,
+        "options": {}
+      },
+      "id": "55ae89d8-a32c-4162-9016-e2b10270f73e",
+      "name": "Get Odoo Categories",
+      "type": "n8n-nodes-base.odooTool",
+      "typeVersion": 1,
+      "position": [
+        1712,
+        336
+      ],
+      "credentials": {
+        "odooApi": {
+          "id": "aFbe8QFvFvFCIOIx",
+          "name": "Odoo account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.output || '';\nconst clean = String(raw).replace(/```json|```/gi,'').trim();\nlet rows; try { rows = JSON.parse(clean); } catch(e) { return [{ json:{error:e.message} }]; }\nif (!Array.isArray(rows)) return [{ json:{error:'not array'} }];\nconst chatId = $('Validate Input').first().json.chatId;\nreturn rows.map(r => { const cid = parseInt(String(r.Category_ID??0),10); return { json: { SKU: String(r.SKU||'').trim(), Product_Name: String(r.Product_Name||r.Name||'').trim(), Category: String(r.Category||''), categ_id: cid>0?cid:null, category_id_ready: cid>0, Brand: String(r.Brand||''), list_price: parseFloat(r.list_price||0)||0, chatId } }; });"
+      },
+      "id": "ad686d79-dd56-4e20-a9da-ab85d89fd0fd",
+      "name": "Parse AI Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const products = $input.all().map(i => i.json);\nconst skus = products.map(p => String(p.SKU || '').trim()).filter(s => s.length > 0);\nreturn [{ json: { skus_csv: skus.join(','), sku_count: skus.length, total_products: products.length } }];"
+      },
+      "id": "1e201cf8-9112-4731-94a5-15f44a9744b6",
+      "name": "Build Bulk SKU Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2144,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "custom",
+        "customResource": "=product.template",
+        "operation": "getAll",
+        "returnAll": true,
+        "options": {
+          "fieldsList": [
+            "id",
+            "name",
+            "default_code"
+          ]
+        },
+        "filterRequest": {
+          "filter": [
+            {
+              "fieldName": "=default_code",
+              "operator": "in",
+              "value": "={{ $json.skus_csv }}"
+            }
+          ]
+        }
+      },
+      "id": "0f8b0fbf-ff9c-4bc8-b00a-5dd9388b03af",
+      "name": "Bulk Check SKUs in Odoo",
+      "type": "n8n-nodes-base.odoo",
+      "typeVersion": 1,
+      "position": [
+        2368,
+        112
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "odooApi": {
+          "id": "Zb4G4MMWYWjxblp3",
+          "name": "Admin Credititional"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const products = $('Parse AI Output').all().map(i => i.json);\nconst odooResults = $input.all().map(i => i.json).filter(r => r && r.id);\n\nconst skuToOdooId = {};\nodooResults.forEach(r => {\n  if (r.default_code) skuToOdooId[String(r.default_code).toLowerCase()] = r.id;\n});\n\nreturn products.map(product => {\n  const sku = String(product.SKU || '').trim();\n  const productName = String(product.Product_Name || '').trim();\n  const categId = parseInt(String(product.categ_id || ''), 10);\n  const categoryReady = Number.isInteger(categId) && categId > 0;\n  const odooIdFound = sku ? (skuToOdooId[sku.toLowerCase()] || null) : null;\n  const skuFoundInOdoo = Boolean(odooIdFound);\n  \n  let duplicateCheck, notes;\n  if (!categoryReady) { duplicateCheck = 'MISSING_CATEGORY_ID'; notes = 'Skipped: no category for \"' + (product.Category || '') + '\"'; }\n  else if (skuFoundInOdoo) { duplicateCheck = 'REJECTED_SKU_EXISTS'; notes = 'SKU \"' + sku + '\" already exists in Odoo (ID: ' + odooIdFound + ')'; }\n  else if (!sku) { duplicateCheck = 'MISSING_SKU'; notes = 'No SKU - will create without Internal Reference'; }\n  else { duplicateCheck = 'NEW_CREATE'; notes = 'New product: SKU \"' + sku + '\" will be created'; }\n  \n  return { json: { SKU: sku, Product_Name: productName, Category: product.Category || '', categ_id: categoryReady ? categId : null, category_id_ready: categoryReady, Brand: product.Brand || '', list_price: product.list_price || 0, odoo_id_found: odooIdFound, already_exists: skuFoundInOdoo, duplicate_check: duplicateCheck, Notes: notes, chatId: product.chatId || '' } };\n});"
+      },
+      "id": "4d5ed79e-5a7e-4fe2-98a3-e3064d534134",
+      "name": "Evaluate Duplicate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2592,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "ne",
+              "leftValue": "={{ $json.already_exists }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "false"
+              },
+              "rightValue": false
+            },
+            {
+              "id": "hc",
+              "leftValue": "={{ $json.category_id_ready }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              },
+              "rightValue": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2511f96c-1739-4dcb-8493-3a29f0dc58b3",
+      "name": "Is New Product?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2816,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "custom",
+        "customResource": "=product.template",
+        "fieldsToCreateOrUpdate": {
+          "fields": [
+            {
+              "fieldName": "=name",
+              "fieldValue": "={{ $json.Product_Name }}"
+            },
+            {
+              "fieldName": "=categ_id",
+              "fieldValue": "={{ Number($json.categ_id) }}"
+            },
+            {
+              "fieldName": "=default_code",
+              "fieldValue": "={{ $json.SKU }}"
+            },
+            {
+              "fieldName": "=list_price",
+              "fieldValue": "={{ $json.list_price }}"
+            },
+            {
+              "fieldName": "=description_sale",
+              "fieldValue": "={{ 'Brand: ' + ($json.Brand || '') + ' | Category: ' + ($json.Category || '') }}"
+            }
+          ]
+        }
+      },
+      "id": "3e25c936-735d-473f-9140-e385fa48ed6e",
+      "name": "Create Product in Odoo",
+      "type": "n8n-nodes-base.odoo",
+      "typeVersion": 1,
+      "position": [
+        3040,
+        16
+      ],
+      "credentials": {
+        "odooApi": {
+          "id": "Zb4G4MMWYWjxblp3",
+          "name": "Admin Credititional"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const sourceItems = $('Is New Product?').all();\nreturn $input.all().map((createdItem, index) => {\n  const created = createdItem.json || {};\n  const pairedIndex = createdItem.pairedItem?.item ?? index;\n  const source = sourceItems[pairedIndex]?.json || {};\n  return { json: { SKU: source.SKU || '', Product_Name: source.Product_Name || '', Category: source.Category || '', Category_ID: source.categ_id || '', Brand: source.Brand || '', Status: 'Created', Odoo_ID: created.id || '', Duplicate_Check: 'NEW_CREATE', Notes: 'Created with Category ID: ' + (source.categ_id || '') } };\n});"
+      },
+      "id": "f8db8714-a732-4ffa-9d69-727587be3314",
+      "name": "Mark as Created",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3264,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(i => ({ json: i.json }));"
+      },
+      "id": "6895a0dd-3959-4277-98a0-9ceca2c4968d",
+      "name": "Build Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3488,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(i => {\n  const item = i.json || {};\n  let status;\n  switch (item.duplicate_check) {\n    case 'MISSING_CATEGORY_ID': status = 'Skipped - Missing Category ID'; break;\n    case 'REJECTED_SKU_EXISTS': status = 'Rejected - SKU Already Exists'; break;\n    case 'MISSING_SKU': status = 'Warning - No SKU'; break;\n    default: status = 'Skipped';\n  }\n  return { json: { SKU: item.SKU || '', Product_Name: item.Product_Name || '', Category: item.Category || '', Category_ID: item.categ_id || '', Brand: item.Brand || '', Status: status, Odoo_ID: item.odoo_id_found || '', Duplicate_Check: item.duplicate_check || '', Notes: item.Notes || '' } };\n});"
+      },
+      "id": "516e3b0d-1a8d-4b13-9b1b-78fb031915a3",
+      "name": "Mark as Skipped",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3264,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xls",
+        "options": {
+          "fileName": "odoo_sync_results.xls"
+        }
+      },
+      "id": "a06a245c-516d-4ca4-989f-1d37b0629850",
+      "name": "Convert to Excel",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        3712,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "sendDocument",
+        "chatId": "={{ $('Validate Input').first().json.chatId }}",
+        "binaryData": true,
+        "additionalFields": {
+          "caption": "={{ '✅ Odoo Sync Done\\n📊 ' + $('Build Results').all().filter(i => i.json.Status === 'Created').length + ' created, ' + $('Build Results').all().filter(i => i.json.Status !== 'Created').length + ' skipped/rejected\\n📂 Full report attached' }}",
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "00f96344-d673-468b-b7a8-4c6317b4c868",
+      "name": "Send Excel Result",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3936,
+        112
+      ],
+      "webhookId": "c70d4c8e-d608-4f7f-a8a5-a4d4c1e73a2d",
+      "credentials": {
+        "telegramApi": {
+          "id": "ZweVYDSedKAPCU69",
+          "name": "AI_Agentproduct_bot"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Message": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Is Excel?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Excel?": {
+      "main": [
+        [
+          {
+            "node": "Extract from Excel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare PDF Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from Excel": {
+      "main": [
+        [
+          {
+            "node": "Collect All Products",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect All Products": {
+      "main": [
+        [
+          {
+            "node": "AI Categorization Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare PDF Data": {
+      "main": [
+        [
+          {
+            "node": "GPT-5 Read PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT-5 Read PDF": {
+      "main": [
+        [
+          {
+            "node": "Parse PDF Products",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse PDF Products": {
+      "main": [
+        [
+          {
+            "node": "Collect All Products",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Categorization Agent": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT-5": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Categorization Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Odoo Categories": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Categorization Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Output": {
+      "main": [
+        [
+          {
+            "node": "Build Bulk SKU Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Bulk SKU Query": {
+      "main": [
+        [
+          {
+            "node": "Bulk Check SKUs in Odoo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bulk Check SKUs in Odoo": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Is New Product?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is New Product?": {
+      "main": [
+        [
+          {
+            "node": "Create Product in Odoo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark as Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Product in Odoo": {
+      "main": [
+        [
+          {
+            "node": "Mark as Created",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark as Created": {
+      "main": [
+        [
+          {
+            "node": "Build Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Results": {
+      "main": [
+        [
+          {
+            "node": "Convert to Excel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark as Skipped": {
+      "main": [
+        [
+          {
+            "node": "Build Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to Excel": {
+      "main": [
+        [
+          {
+            "node": "Send Excel Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "versionId": "f6612f5e-2cc6-47e7-a150-b81e08b5d0e7",
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp",
+    "instanceId": "f2bc043fe69d31a15311aa2cd21b3ee292a856ab9721a5e17b127c2d9716878a"
+  },
+  "id": "PftxUrkfDv7wpRyJ",
+  "tags": []
+}
